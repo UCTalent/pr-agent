@@ -2,12 +2,16 @@ import os
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
-from ..log import get_logger
-from ..algo.language_handler import is_valid_file
-from ..algo.utils import clip_tokens, find_line_number_of_relevant_line_in_file, load_large_diff
-from ..config_loader import get_settings
-from .git_provider import GitProvider
 from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
+
+from ..algo.file_filter import filter_ignored
+from ..algo.language_handler import is_valid_file
+from ..algo.utils import (PRDescriptionHeader, clip_tokens,
+                          find_line_number_of_relevant_line_in_file,
+                          load_large_diff)
+from ..config_loader import get_settings
+from ..log import get_logger
+from .git_provider import GitProvider
 
 AZURE_DEVOPS_AVAILABLE = True
 ADO_APP_CLIENT_DEFAULT_ID = "499b84ac-1321-427f-aa17-267ca6975798/.default"
@@ -15,19 +19,16 @@ MAX_PR_DESCRIPTION_AZURE_LENGTH = 4000-1
 
 try:
     # noinspection PyUnresolvedReferences
-    from msrest.authentication import BasicAuthentication
     # noinspection PyUnresolvedReferences
     from azure.devops.connection import Connection
     # noinspection PyUnresolvedReferences
-    from azure.identity import DefaultAzureCredential
+    from azure.devops.v7_1.git.models import (Comment, CommentThread,
+                                              GitPullRequest,
+                                              GitPullRequestIterationChanges,
+                                              GitVersionDescriptor)
     # noinspection PyUnresolvedReferences
-    from azure.devops.v7_1.git.models import (
-        Comment,
-        CommentThread,
-        GitVersionDescriptor,
-        GitPullRequest,
-        GitPullRequestIterationChanges,
-    )
+    from azure.identity import DefaultAzureCredential
+    from msrest.authentication import BasicAuthentication
 except ImportError:
     AZURE_DEVOPS_AVAILABLE = False
 
@@ -164,7 +165,7 @@ class AzureDevopsProvider(GitProvider):
                     pull_request_id=self.pr_num,
                 )
         except Exception as e:
-            get_logger().exception(f"Failed to publish labels, error: {e}")
+            get_logger().warning(f"Failed to publish labels, error: {e}")
 
     def get_pr_labels(self, update=False):
         try:
@@ -284,8 +285,20 @@ class AzureDevopsProvider(GitProvider):
             #
             # diffs = list(set(diffs))
 
+            diffs_original = diffs
+            diffs = filter_ignored(diffs_original, 'azure')
+            if diffs_original != diffs:
+                try:
+                    get_logger().info(f"Filtered out [ignore] files for pull request:", extra=
+                    {"files": diffs_original,  # diffs is just a list of names
+                     "filtered_files": diffs})
+                except Exception:
+                    pass
+
+            invalid_files_names = []
             for file in diffs:
                 if not is_valid_file(file):
+                    invalid_files_names.append(file)
                     continue
 
                 version = GitVersionDescriptor(
@@ -303,7 +316,7 @@ class AzureDevopsProvider(GitProvider):
 
                     new_file_content_str = new_file_content_str.content
                 except Exception as error:
-                    get_logger().error(f"Failed to retrieve new file content of {file} at version {version}. Error: {str(error)}")
+                    get_logger().error(f"Failed to retrieve new file content of {file} at version {version}", error=error)
                     # get_logger().error(
                     #     "Failed to retrieve new file content of %s at version %s. Error: %s",
                     #     file,
@@ -323,23 +336,31 @@ class AzureDevopsProvider(GitProvider):
                 version = GitVersionDescriptor(
                     version=base_sha.commit_id, version_type="commit"
                 )
-                try:
-                    original_file_content_str = self.azure_devops_client.get_item(
-                        repository_id=self.repo_slug,
-                        path=file,
-                        project=self.workspace_slug,
-                        version_descriptor=version,
-                        download=False,
-                        include_content=True,
-                    )
-                    original_file_content_str = original_file_content_str.content
-                except Exception as error:
-                    get_logger().error(f"Failed to retrieve original file content of {file} at version {version}. Error: {str(error)}")
+                if edit_type == EDIT_TYPE.ADDED:
                     original_file_content_str = ""
+                else:
+                    try:
+                        original_file_content_str = self.azure_devops_client.get_item(
+                            repository_id=self.repo_slug,
+                            path=file,
+                            project=self.workspace_slug,
+                            version_descriptor=version,
+                            download=False,
+                            include_content=True,
+                        )
+                        original_file_content_str = original_file_content_str.content
+                    except Exception as error:
+                        get_logger().error(f"Failed to retrieve original file content of {file} at version {version}", error=error)
+                        original_file_content_str = ""
 
                 patch = load_large_diff(
                     file, new_file_content_str, original_file_content_str, show_warning=False
                 ).rstrip()
+
+                # count number of lines added and removed
+                patch_lines = patch.splitlines(keepends=True)
+                num_plus_lines = len([line for line in patch_lines if line.startswith('+')])
+                num_minus_lines = len([line for line in patch_lines if line.startswith('-')])
 
                 diff_files.append(
                     FilePatchInfo(
@@ -348,17 +369,21 @@ class AzureDevopsProvider(GitProvider):
                         patch=patch,
                         filename=file,
                         edit_type=edit_type,
+                        num_plus_lines=num_plus_lines,
+                        num_minus_lines=num_minus_lines,
                     )
                 )
+            get_logger().info(f"Invalid files: {invalid_files_names}")
+
             self.diff_files = diff_files
             return diff_files
         except Exception as e:
-            print(f"Error: {str(e)}")
+            get_logger().exception(f"Failed to get diff files, error: {e}")
             return []
 
     def publish_comment(self, pr_comment: str, is_temporary: bool = False, thread_context=None):
         comment = Comment(content=pr_comment)
-        thread = CommentThread(comments=[comment], thread_context=thread_context, status=1)
+        thread = CommentThread(comments=[comment], thread_context=thread_context, status=5)
         thread_response = self.azure_devops_client.create_thread(
             comment_thread=thread,
             project=self.workspace_slug,
@@ -379,7 +404,7 @@ class AzureDevopsProvider(GitProvider):
                 pr_body = pr_body[:ind]
 
             if len(pr_body) > MAX_PR_DESCRIPTION_AZURE_LENGTH:
-                changes_walkthrough_text = '## **Changes walkthrough**'
+                changes_walkthrough_text = PRDescriptionHeader.CHANGES_WALKTHROUGH.value
                 ind = pr_body.find(changes_walkthrough_text)
                 if ind != -1:
                     pr_body = pr_body[:ind]
@@ -410,7 +435,7 @@ class AzureDevopsProvider(GitProvider):
         except Exception as e:
             get_logger().exception(f"Failed to remove temp comments, error: {e}")
 
-    def publish_inline_comment(self, body: str, relevant_file: str, relevant_line_in_file: str):
+    def publish_inline_comment(self, body: str, relevant_file: str, relevant_line_in_file: str, original_suggestion=None):
         self.publish_inline_comments([self.create_inline_comment(body, relevant_file, relevant_line_in_file)])
 
 
@@ -430,7 +455,7 @@ class AzureDevopsProvider(GitProvider):
         return dict(body=body, path=path, position=position, absolute_position=absolute_position) if subject_type == "LINE" else {}
 
     def publish_inline_comments(self, comments: list[dict], disable_fallback: bool = False):
-            overall_sucess = True
+            overall_success = True
             for comment in comments:
                 try:
                     self.publish_comment(comment["body"],
@@ -452,8 +477,8 @@ class AzureDevopsProvider(GitProvider):
                 except Exception as e:
                     if get_settings().config.verbosity_level >= 2:
                         get_logger().error(f"Failed to publish code suggestion, error: {e}")
-                    overall_sucess = False
-            return overall_sucess
+                    overall_success = False
+            return overall_success
 
     def get_title(self):
         return self.pr.title
@@ -494,19 +519,20 @@ class AzureDevopsProvider(GitProvider):
         source_branch = pr_info.source_ref_name.split("/")[-1]
         return source_branch
 
-    def get_pr_description(self, *, full: bool = True) -> str:
-        max_tokens = get_settings().get("CONFIG.MAX_DESCRIPTION_TOKENS", None)
-        if max_tokens:
-            return clip_tokens(self.pr.description, max_tokens)
-        return self.pr.description
-
     def get_user_id(self):
         return 0
 
     def get_issue_comments(self):
-        raise NotImplementedError(
-            "Azure DevOps provider does not support issue comments yet"
-        )
+        threads = self.azure_devops_client.get_threads(repository_id=self.repo_slug, pull_request_id=self.pr_num, project=self.workspace_slug)
+        threads.reverse()
+        comment_list = []
+        for thread in threads:
+            for comment in thread.comments:
+                if comment.content and comment not in comment_list:
+                    comment.body = comment.content
+                    comment.thread_id = thread.id
+                    comment_list.append(comment)
+        return comment_list
 
     def add_eyes_reaction(self, issue_comment_id: int, disable_eyes: bool = False) -> Optional[int]:
         return True
@@ -519,18 +545,20 @@ class AzureDevopsProvider(GitProvider):
         parsed_url = urlparse(pr_url)
 
         path_parts = parsed_url.path.strip("/").split("/")
-
-        if len(path_parts) < 6 or path_parts[4] != "pullrequest":
+        if "pullrequest" not in path_parts:
             raise ValueError(
                 "The provided URL does not appear to be a Azure DevOps PR URL"
             )
-
-        workspace_slug = path_parts[1]
-        repo_slug = path_parts[3]
-        try:
+        if len(path_parts) == 6:  # "https://dev.azure.com/organization/project/_git/repo/pullrequest/1"
+            workspace_slug = path_parts[1]
+            repo_slug = path_parts[3]
             pr_number = int(path_parts[5])
-        except ValueError as e:
-            raise ValueError("Unable to convert PR number to integer") from e
+        elif len(path_parts) == 5:  # 'https://organization.visualstudio.com/project/_git/repo/pullrequest/1'
+            workspace_slug = path_parts[0]
+            repo_slug = path_parts[2]
+            pr_number = int(path_parts[4])
+        else:
+            raise ValueError("The provided URL does not appear to be a Azure DevOps PR URL")
 
         return workspace_slug, repo_slug, pr_number
 
@@ -590,3 +618,5 @@ class AzureDevopsProvider(GitProvider):
                 get_logger().error(f"Failed to get pr id, error: {e}")
             return ""
 
+    def publish_file_comments(self, file_comments: list) -> bool:
+        pass

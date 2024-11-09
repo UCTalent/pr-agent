@@ -3,14 +3,16 @@ from datetime import date
 from functools import partial
 from time import sleep
 from typing import Tuple
+
 from jinja2 import Environment, StrictUndefined
+
 from pr_agent.algo.ai_handlers.base_ai_handler import BaseAiHandler
 from pr_agent.algo.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 from pr_agent.algo.pr_processing import get_pr_diff, retry_with_fallback_models
 from pr_agent.algo.token_handler import TokenHandler
 from pr_agent.algo.utils import ModelType, show_relevant_configurations
 from pr_agent.config_loader import get_settings
-from pr_agent.git_providers import get_git_provider, GithubProvider
+from pr_agent.git_providers import GithubProvider, get_git_provider
 from pr_agent.git_providers.git_provider import get_main_pr_language
 from pr_agent.log import get_logger
 
@@ -25,7 +27,7 @@ class PRUpdateChangelog:
             self.git_provider.get_languages(), self.git_provider.get_files()
         )
         self.commit_changelog = get_settings().pr_update_changelog.push_changelog_changes
-        self._get_changlog_file()  # self.changelog_file_str
+        self._get_changelog_file()  # self.changelog_file_str
 
         self.ai_handler = ai_handler()
         self.ai_handler.main_pr_language = self.main_language
@@ -103,8 +105,8 @@ class PRUpdateChangelog:
         environment = Environment(undefined=StrictUndefined)
         system_prompt = environment.from_string(get_settings().pr_update_changelog_prompt.system).render(variables)
         user_prompt = environment.from_string(get_settings().pr_update_changelog_prompt.user).render(variables)
-        response, finish_reason = await self.ai_handler.chat_completion(model=model, temperature=0.2,
-                                                                        system=system_prompt, user=user_prompt)
+        response, finish_reason = await self.ai_handler.chat_completion(
+            model=model, system=system_prompt, user=user_prompt, temperature=get_settings().config.temperature)
 
         return response
 
@@ -130,7 +132,7 @@ class PRUpdateChangelog:
             file_path="CHANGELOG.md",
             branch=self.git_provider.get_pr_branch(),
             contents=new_file_content,
-            message="Update CHANGELOG.md",
+            message="[skip ci] Update CHANGELOG.md",
         )
 
         sleep(5)  # wait for the file to be updated
@@ -163,7 +165,7 @@ Example:
 """
         return example_changelog
 
-    def _get_changlog_file(self):
+    def _get_changelog_file(self):
         try:
             self.changelog_file = self.git_provider.get_pr_file_content(
                 "CHANGELOG.md", self.git_provider.get_pr_branch()

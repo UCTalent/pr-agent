@@ -4,9 +4,9 @@ from typing import List
 
 from git import Repo
 
+from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
 from pr_agent.config_loader import _find_repository_root, get_settings
 from pr_agent.git_providers.git_provider import GitProvider
-from pr_agent.algo.types import EDIT_TYPE, FilePatchInfo
 from pr_agent.log import get_logger
 
 
@@ -119,7 +119,7 @@ class LocalGitProvider(GitProvider):
             # Write the string to the file
             file.write(pr_comment)
 
-    def publish_inline_comment(self, body: str, relevant_file: str, relevant_line_in_file: str):
+    def publish_inline_comment(self, body: str, relevant_file: str, relevant_line_in_file: str, original_suggestion=None):
         raise NotImplementedError('Publishing inline comments is not implemented for the local git provider')
 
     def publish_inline_comments(self, comments: list[dict]):

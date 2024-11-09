@@ -6,8 +6,8 @@ from jinja2 import Environment, StrictUndefined
 
 from pr_agent.algo.ai_handlers.base_ai_handler import BaseAiHandler
 from pr_agent.algo.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
-from pr_agent.algo.git_patch_processing import convert_to_hunks_with_lines_numbers, \
-    extract_hunk_lines_from_patch
+from pr_agent.algo.git_patch_processing import (
+    convert_to_hunks_with_lines_numbers, extract_hunk_lines_from_patch)
 from pr_agent.algo.pr_processing import get_pr_diff, retry_with_fallback_models
 from pr_agent.algo.token_handler import TokenHandler
 from pr_agent.algo.utils import ModelType
@@ -102,6 +102,6 @@ class PR_LineQuestions:
             print(f"\nSystem prompt:\n{system_prompt}")
             print(f"\nUser prompt:\n{user_prompt}")
 
-        response, finish_reason = await self.ai_handler.chat_completion(model=model, temperature=0.2,
-                                                                        system=system_prompt, user=user_prompt)
+        response, finish_reason = await self.ai_handler.chat_completion(
+            model=model, temperature=get_settings().config.temperature, system=system_prompt, user=user_prompt)
         return response

@@ -3,7 +3,6 @@ from functools import partial
 
 from pr_agent.algo.ai_handlers.base_ai_handler import BaseAiHandler
 from pr_agent.algo.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
-
 from pr_agent.algo.utils import update_settings_from_args
 from pr_agent.config_loader import get_settings
 from pr_agent.git_providers.utils import apply_repo_settings
@@ -46,9 +45,10 @@ command2class = {
 
 commands = list(command2class.keys())
 
+
 class PRAgent:
     def __init__(self, ai_handler: partial[BaseAiHandler,] = LiteLLMAIHandler):
-        self.ai_handler = ai_handler # will be initialized in run_action
+        self.ai_handler = ai_handler  # will be initialized in run_action
         self.forbidden_cli_args = ['enable_auto_approval']
 
     async def handle_request(self, pr_url, request, notify=None) -> bool:
@@ -68,7 +68,9 @@ class PRAgent:
             for forbidden_arg in self.forbidden_cli_args:
                 for arg in args:
                     if forbidden_arg in arg:
-                        get_logger().error(f"CLI argument for param '{forbidden_arg}' is forbidden. Use instead a configuration file.")
+                        get_logger().error(
+                            f"CLI argument for param '{forbidden_arg}' is forbidden. Use instead a configuration file."
+                        )
                         return False
         args = update_settings_from_args(args)
 
@@ -76,7 +78,7 @@ class PRAgent:
         if action not in command2class:
             get_logger().debug(f"Unknown command: {action}")
             return False
-        with get_logger().contextualize(command=action):
+        with get_logger().contextualize(command=action, pr_url=pr_url):
             get_logger().info("PR-Agent request handler started", analytics=True)
             if action == "reflect_and_review":
                 get_settings().pr_reviewer.ask_and_reflect = True
@@ -94,4 +96,3 @@ class PRAgent:
             else:
                 return False
             return True
-
