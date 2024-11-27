@@ -76,9 +76,9 @@ maximal_review_effort=5
 
 
 [pr_description] # /describe #
-publish_labels=false
+publish_labels=true
 add_original_user_description=true
-generate_ai_title=false
+generate_ai_title=true
 use_bullet_points=true
 extra_instructions = ""
 enable_pr_type=true
@@ -196,7 +196,7 @@ num_retrieved_snippets=5
 
 [github]
 # The type of deployment to create. Valid values are 'app' or 'user'.
-deployment_type = "user"
+deployment_type = "app"
 ratelimit_retries = 5
 base_url = "https://api.github.com"
 publish_inline_comments_fallback_with_verification = true
