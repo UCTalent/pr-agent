@@ -16,6 +16,9 @@ lint = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
+s3_prefix = "uct-pr-agent"
+region = "us-west-2"
+image_repositories = ["PRAgentFunction=833388501257.dkr.ecr.us-west-2.amazonaws.com/uctpragent06a149a8/pragentfunctionccb17128repo"]
 
 [default.package.parameters]
 resolve_s3 = true

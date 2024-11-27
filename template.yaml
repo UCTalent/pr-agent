@@ -3,13 +3,13 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   uct-pr-agent
 
-  Sample SAM Template for uct-pr-agent
+  SAM Template for uct-pr-agent
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 60
-    MemorySize: 512
+    Timeout: 300
+    MemorySize: 1024
 
     Tracing: Active
     # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
@@ -18,6 +18,25 @@ Globals:
   Api:
     TracingEnabled: true
 Resources:
+  PRAgentSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: uct-pr-agent-202411
+      Description: Secret to store GITHUB_WEBHOOK_SECRET and OPENAI_KEY
+      SecretString: !Sub |
+        {
+          "GITHUB__DEPLOYMENT_TYPE": "app",
+          "GITHUB__WEBHOOK_SECRET": "dummy-key",
+          "GITHUB__APP_ID": "dummy-key",
+          "OPENAI__KEY": "dummy-key"
+        }
+      Tags:
+        - Key: Purpose
+          Value: Manage API Keys and Secrets
+        - Key: Version
+          Value: v202411
+    UpdateReplacePolicy: Retain
+
   PRAgentFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
@@ -30,11 +49,17 @@ Resources:
             Path: /{proxy+}
             Method: ANY
         RootResource:
-          PayloadFormatVersion: "2.0"
           Type: HttpApi
           Properties:
             Path: /
             Method: ANY
+      Environment:
+        Variables:
+          OPENAI__KEY: "{{resolve:secretsmanager:uct-pr-agent-202411:SecretString:OPENAI__KEY}}"
+          GITHUB__WEBHOOK_SECRET: "{{resolve:secretsmanager:uct-pr-agent-202411:SecretString:GITHUB__WEBHOOK_SECRET}}"
+          GITHUB__DEPLOYMENT_TYPE: "{{resolve:secretsmanager:uct-pr-agent-202411:SecretString:GITHUB__DEPLOYMENT_TYPE}}"
+          GITHUB__APP_ID: "{{resolve:secretsmanager:uct-pr-agent-202411:SecretString:GITHUB__APP_ID}}"
+          AZURE_DEVOPS_CACHE_DIR: "/tmp"
     Metadata:
       DockerTag: latest
       DockerContext: .
@@ -59,7 +84,7 @@ Outputs:
   # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
   PRAgentApi:
     Description: API Gateway endpoint URL for Prod stage for Hello World function
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+    Value: !Sub "https://${PRAgentFunction}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
   PRAgentFunction:
     Description: Hello World Lambda Function ARN
     Value: !GetAtt PRAgentFunction.Arn
