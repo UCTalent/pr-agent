@@ -36,5 +36,5 @@ pinecone-datasets @ git+https://github.com/mrT23/pinecone-datasets.git@main
 lancedb==0.5.1
 # Uncomment this to support language LangChainOpenAIHandler
 langchain==0.2.0
-langchain-core==0.2.28
+langchain-core==1.2.11
 langchain-openai==0.1.20
